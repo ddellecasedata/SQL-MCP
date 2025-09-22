@@ -56,9 +56,11 @@ BASE_URL = os.getenv("BASE_URL", f"http://localhost:{PORT}")
 AUTH_SECRET = os.getenv("AUTH_SECRET", secrets.token_hex(32))
 DISABLE_AUTH = os.getenv("DISABLE_AUTH", "false").lower() == "true"  # Per debug/test
 
-# Configure logging
+# Configure logging  
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Force redeploy - all syntax errors fixed
 
 # Database pool
 db_pool = None
