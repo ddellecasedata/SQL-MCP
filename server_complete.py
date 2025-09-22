@@ -164,57 +164,37 @@ async def mcp_endpoint(request: dict, api_key: str = Depends(verify_api_key)):
         params = request.get("params", {})
         
         if method == "tools/list":
-            # Lista dei tool MCP disponibili
+            # Lista dei tool MCP disponibili per OpenAI ChatGPT
             result = {
                 "tools": [
                     {
-                        "name": "health_check",
-                        "title": "Health Check Server",
-                        "description": "Check dello stato del server e database",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {},
-                            "required": []
-                        }
-                    },
-                    {
-                        "name": "lista_alimenti", 
-                        "title": "Lista Alimenti Inventario",
-                        "description": "Ottieni lista completa degli alimenti nell'inventario",
+                        "name": "search",
+                        "title": "Search Inventory Database",
+                        "description": "Search for food items and tasks in the inventory database. Returns relevant results based on keywords.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
-                                "categoria": {"type": "string", "description": "Filtra per categoria"},
-                                "ubicazione": {"type": "string", "description": "Filtra per ubicazione"}
-                            }
-                        }
-                    },
-                    {
-                        "name": "aggiungi_alimento",
-                        "title": "Aggiungi Alimento",
-                        "description": "Aggiungi un nuovo alimento all'inventario",
-                        "inputSchema": {
-                            "type": "object", 
-                            "properties": {
-                                "nome": {"type": "string", "description": "Nome alimento"},
-                                "quantita": {"type": "number", "description": "Quantità"},
-                                "unita_misura": {"type": "string", "enum": ["PEZZI", "KG", "LITRI", "GRAMMI"]},
-                                "categoria": {"type": "string", "enum": ["LATTICINI", "VERDURE", "FRUTTA", "CARNE", "PESCE", "CONSERVE", "BEVANDE", "ALTRO"]},
-                                "ubicazione": {"type": "string", "enum": ["FRIGO", "FREEZER", "DISPENSA", "CANTINA"]},
-                                "data_scadenza": {"type": "string", "format": "date", "description": "Data scadenza YYYY-MM-DD"}
+                                "query": {
+                                    "type": "string", 
+                                    "description": "Search query for food items, categories, locations, or tasks"
+                                }
                             },
-                            "required": ["nome", "quantita", "unita_misura", "categoria", "ubicazione"]
+                            "required": ["query"]
                         }
                     },
                     {
-                        "name": "alimenti_in_scadenza",
-                        "title": "Alimenti in Scadenza",
-                        "description": "Ottieni alimenti in scadenza entro N giorni",
+                        "name": "fetch",
+                        "title": "Fetch Item Details",
+                        "description": "Retrieve complete details of a specific food item or task by ID",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
-                                "giorni": {"type": "integer", "default": 3, "description": "Giorni limite per scadenza"}
-                            }
+                                "id": {
+                                    "type": "string",
+                                    "description": "Unique identifier for the food item or task (format: 'alimento-{id}' or 'task-{id}')"
+                                }
+                            },
+                            "required": ["id"]
                         }
                     }
                 ]
@@ -227,18 +207,14 @@ async def mcp_endpoint(request: dict, api_key: str = Depends(verify_api_key)):
             }
             
         elif method == "tools/call":
-            # Chiamata di un tool specifico
+            # Chiamata di un tool specifico per OpenAI ChatGPT
             tool_name = params.get("name")
             arguments = params.get("arguments", {})
             
-            if tool_name == "health_check":
-                content = await mcp_health_check()
-            elif tool_name == "lista_alimenti":
-                content = await mcp_lista_alimenti(**arguments)
-            elif tool_name == "aggiungi_alimento":
-                content = await mcp_aggiungi_alimento(**arguments) 
-            elif tool_name == "alimenti_in_scadenza":
-                content = await mcp_alimenti_in_scadenza(**arguments)
+            if tool_name == "search":
+                content = await openai_search_tool(**arguments)
+            elif tool_name == "fetch":
+                content = await openai_fetch_tool(**arguments)
             else:
                 return {
                     "jsonrpc": "2.0",
@@ -253,7 +229,7 @@ async def mcp_endpoint(request: dict, api_key: str = Depends(verify_api_key)):
                 "jsonrpc": "2.0", 
                 "id": request_id,
                 "result": {
-                    "content": content["content"],
+                    "content": content,
                     "isError": False
                 }
             }
@@ -279,7 +255,183 @@ async def mcp_endpoint(request: dict, api_key: str = Depends(verify_api_key)):
             }
         }
 
-# Implementazioni dei tool MCP
+# Implementazioni dei tool MCP per OpenAI ChatGPT
+async def openai_search_tool(query: str):
+    """
+    Tool search richiesto da OpenAI ChatGPT.
+    Cerca nel database degli alimenti e task restituendo risultati in formato OpenAI.
+    """
+    try:
+        async with db_pool.acquire() as conn:
+            results = []
+            
+            # Cerca negli alimenti
+            alimenti_rows = await conn.fetch("""
+                SELECT id, nome, quantita, unita_misura, categoria, ubicazione, data_scadenza
+                FROM alimenti 
+                WHERE LOWER(nome) LIKE LOWER($1) 
+                   OR LOWER(categoria::text) LIKE LOWER($1)
+                   OR LOWER(ubicazione::text) LIKE LOWER($1)
+                ORDER BY data_inserimento DESC
+                LIMIT 10
+            """, f"%{query}%")
+            
+            for row in alimenti_rows:
+                scadenza_info = f" - Scade: {row['data_scadenza']}" if row['data_scadenza'] else ""
+                results.append({
+                    "id": f"alimento-{row['id']}",
+                    "title": f"{row['nome']} ({row['quantita']} {row['unita_misura']})",
+                    "url": f"https://sql-mcp-server.onrender.com/api/alimenti/{row['id']}"
+                })
+            
+            # Cerca nei task (se esistono)
+            try:
+                task_rows = await conn.fetch("""
+                    SELECT id, titolo, descrizione, priorita, stato
+                    FROM task 
+                    WHERE LOWER(titolo) LIKE LOWER($1) 
+                       OR LOWER(descrizione) LIKE LOWER($1)
+                    ORDER BY data_creazione DESC
+                    LIMIT 5
+                """, f"%{query}%")
+                
+                for row in task_rows:
+                    results.append({
+                        "id": f"task-{row['id']}",
+                        "title": f"Task: {row['titolo']} ({row['stato']})",
+                        "url": f"https://sql-mcp-server.onrender.com/api/task/{row['id']}"
+                    })
+            except:
+                # Task table might not exist yet
+                pass
+            
+            # Formato richiesto da OpenAI: JSON string nel content
+            results_json = json.dumps({"results": results})
+            
+            return [
+                {
+                    "type": "text",
+                    "text": results_json
+                }
+            ]
+            
+    except Exception as e:
+        logger.error(f"Errore search tool: {e}")
+        return [
+            {
+                "type": "text", 
+                "text": json.dumps({"results": [], "error": str(e)})
+            }
+        ]
+
+async def openai_fetch_tool(id: str):
+    """
+    Tool fetch richiesto da OpenAI ChatGPT.
+    Recupera i dettagli completi di un alimento o task specifico.
+    """
+    try:
+        if id.startswith("alimento-"):
+            alimento_id = int(id.replace("alimento-", ""))
+            
+            async with db_pool.acquire() as conn:
+                row = await conn.fetchrow("""
+                    SELECT * FROM alimenti WHERE id = $1
+                """, alimento_id)
+                
+                if not row:
+                    raise ValueError(f"Alimento ID {alimento_id} non trovato")
+                
+                # Prepara il documento completo
+                text_content = f"""
+ALIMENTO: {row['nome']}
+
+Dettagli:
+- Quantità: {row['quantita']} {row['unita_misura']}
+- Categoria: {row['categoria']}
+- Ubicazione: {row['ubicazione']}
+- Data scadenza: {row['data_scadenza'] or 'Non specificata'}
+- Data apertura: {row['data_apertura'] or 'Non aperto'}
+- Prezzo acquisto: €{row['prezzo_acquisto'] or 'N/A'}
+- Fornitore: {row['fornitore'] or 'Non specificato'}
+- Lotto: {row['lotto_acquisto'] or 'Non specificato'}
+- Inserito il: {row['data_inserimento']}
+- Modificato il: {row['ultima_modifica']}
+- Modificato da: {row['modificato_da']}
+"""
+                
+                document = {
+                    "id": id,
+                    "title": f"Alimento: {row['nome']}",
+                    "text": text_content,
+                    "url": f"https://sql-mcp-server.onrender.com/api/alimenti/{alimento_id}",
+                    "metadata": {
+                        "type": "alimento",
+                        "categoria": row['categoria'],
+                        "ubicazione": row['ubicazione']
+                    }
+                }
+                
+        elif id.startswith("task-"):
+            task_id = int(id.replace("task-", ""))
+            
+            async with db_pool.acquire() as conn:
+                row = await conn.fetchrow("""
+                    SELECT * FROM task WHERE id = $1
+                """, task_id)
+                
+                if not row:
+                    raise ValueError(f"Task ID {task_id} non trovato")
+                
+                text_content = f"""
+TASK: {row['titolo']}
+
+Dettagli:
+- Descrizione: {row['descrizione'] or 'Nessuna descrizione'}
+- Priorità: {row['priorita']}
+- Stato: {row['stato']}
+- Data scadenza: {row['data_scadenza'] or 'Non specificata'}
+- Assegnatario: {row['assegnatario'] or 'Non assegnato'}
+- Ricorrente: {'Sì' if row['task_ricorrente'] else 'No'}
+- Frequenza: {row['frequenza_ricorrenza'] or 'N/A'}
+- Creato il: {row['data_creazione']}
+- Creato da: {row['creato_da']}
+- Modificato il: {row['ultima_modifica']}
+"""
+                
+                document = {
+                    "id": id,
+                    "title": f"Task: {row['titolo']}",
+                    "text": text_content,
+                    "url": f"https://sql-mcp-server.onrender.com/api/task/{task_id}",
+                    "metadata": {
+                        "type": "task",
+                        "priorita": row['priorita'],
+                        "stato": row['stato']
+                    }
+                }
+        else:
+            raise ValueError(f"ID format non valido: {id}")
+        
+        # Formato richiesto da OpenAI: JSON string nel content
+        document_json = json.dumps(document)
+        
+        return [
+            {
+                "type": "text",
+                "text": document_json
+            }
+        ]
+        
+    except Exception as e:
+        logger.error(f"Errore fetch tool: {e}")
+        return [
+            {
+                "type": "text",
+                "text": json.dumps({"error": str(e)})
+            }
+        ]
+
+# Implementazioni dei tool MCP legacy (mantenuti per compatibilità)
 async def mcp_health_check():
     """Tool MCP per health check"""
     try:
