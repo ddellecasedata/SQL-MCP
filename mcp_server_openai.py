@@ -12,6 +12,7 @@ import uuid
 import hashlib
 import base64
 import secrets
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Union
 from urllib.parse import urlparse, parse_qs
@@ -25,9 +26,7 @@ from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
-# MCP imports
-from mcp.server.session import ServerSession
-from mcp.server.stdio import stdio_server
+# MCP imports - simplified for HTTP server
 from mcp.types import (
     Tool, TextContent, CallToolRequest, CallToolResult,
     ListToolsResult, GetPromptResult, PromptMessage,
@@ -74,11 +73,27 @@ class AuthInfo(BaseModel):
     scopes: List[str] = []
     expires_at: Optional[datetime] = None
 
+# Lifespan event handler (replaces deprecated on_event)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    await setup_database()
+    logger.info(f"🚀 Remote MCP Server started on port {PORT}")
+    logger.info(f"🔗 OAuth Discovery: {BASE_URL}/.well-known/oauth-protected-resource")
+    logger.info(f"🔐 Authorization endpoint: {BASE_URL}/authorize") 
+    logger.info(f"🎯 MCP endpoint: {BASE_URL}/mcp")
+    yield
+    # Shutdown - cleanup if needed
+    if db_pool:
+        await db_pool.close()
+    logger.info("Server shutdown complete")
+
 # FastAPI app setup
 app = FastAPI(
     title="Remote MCP Inventory Server",
     description="Production-ready MCP server with OAuth 2.1 authentication",
-    version="3.0.0"
+    version="3.0.0",
+    lifespan=lifespan
 )
 
 # CORS middleware with proper MCP headers
@@ -470,67 +485,48 @@ async def handle_fetch_tool(item_id: str, auth_info: dict):
         logger.error(f"Fetch tool error: {e}")
         return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
 
-# MCP Server Implementation using SDK
-mcp_server = None
+# Simple MCP Server Implementation (without SDK session complexity)
+available_tools = [
+    {
+        "name": "search",
+        "description": "Search for food items in the inventory database",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string", 
+                    "description": "Search query for food items, categories, or locations"
+                }
+            },
+            "required": ["query"]
+        }
+    },
+    {
+        "name": "fetch", 
+        "description": "Get detailed information about a specific food item",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "Item ID in format 'alimento-{id}'"
+                }
+            },
+            "required": ["id"]
+        }
+    }
+]
 
-async def create_mcp_server():
-    """Create and configure MCP server with tools"""
-    global mcp_server
-    
-    # Create server session (in-memory for simplicity)
-    class MockServerSession(ServerSession):
-        def __init__(self):
-            super().__init__()
-            
-        async def run(self):
-            # No-op for HTTP transport
-            pass
-    
-    mcp_server = MockServerSession()
-    
-    # Register tools
-    @mcp_server.list_tools()
-    async def list_tools() -> List[Tool]:
-        return [
-            Tool(
-                name="search",
-                description="Search for food items in the inventory database",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string", 
-                            "description": "Search query for food items, categories, or locations"
-                        }
-                    },
-                    "required": ["query"]
-                }
-            ),
-            Tool(
-                name="fetch",
-                description="Get detailed information about a specific food item",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "id": {
-                            "type": "string",
-                            "description": "Item ID in format 'alimento-{id}'"
-                        }
-                    },
-                    "required": ["id"]
-                }
-            )
-        ]
-    
-    @mcp_server.call_tool()
-    async def call_tool(name: str, arguments: dict, auth_info: dict) -> List[TextContent]:
-        """Handle tool calls with authentication context"""
-        if name == "search":
-            return await handle_search_tool(arguments.get("query", ""), auth_info)
-        elif name == "fetch":
-            return await handle_fetch_tool(arguments.get("id", ""), auth_info)
-        else:
-            raise ValueError(f"Unknown tool: {name}")
+async def call_mcp_tool(name: str, arguments: dict, auth_info: dict) -> List[dict]:
+    """Handle tool calls with authentication context"""
+    if name == "search":
+        result_content = await handle_search_tool(arguments.get("query", ""), auth_info)
+        return [{"type": c.type, "text": c.text} for c in result_content]
+    elif name == "fetch":
+        result_content = await handle_fetch_tool(arguments.get("id", ""), auth_info)
+        return [{"type": c.type, "text": c.text} for c in result_content]
+    else:
+        raise ValueError(f"Unknown tool: {name}")
 
 # Main MCP endpoint with authentication  
 @app.post("/mcp")
@@ -578,54 +574,34 @@ async def mcp_endpoint(request: Request):
             }
             
         elif method == "tools/list":
-            if mcp_server:
-                tools_list = await mcp_server.list_tools()
-                tools_dict = [
-                    {
-                        "name": tool.name,
-                        "description": tool.description,
-                        "inputSchema": tool.inputSchema
-                    }
-                    for tool in tools_list
-                ]
-            else:
-                tools_dict = []
-                
             response_data = {
                 "jsonrpc": "2.0",
                 "id": rpc_id, 
-                "result": {"tools": tools_dict}
+                "result": {"tools": available_tools}
             }
             
         elif method == "tools/call":
             tool_name = params.get("name")
             arguments = params.get("arguments", {})
             
-            if mcp_server:
-                try:
-                    result_content = await mcp_server.call_tool(tool_name, arguments, auth_info)
-                    response_data = {
-                        "jsonrpc": "2.0",
-                        "id": rpc_id,
-                        "result": {
-                            "content": [{"type": c.type, "text": c.text} for c in result_content]
-                        }
-                    }
-                except Exception as tool_error:
-                    logger.error(f"Tool call error: {tool_error}")
-                    response_data = {
-                        "jsonrpc": "2.0",
-                        "id": rpc_id,
-                        "error": {
-                            "code": -32603,
-                            "message": f"Tool execution failed: {str(tool_error)}"
-                        }
-                    }
-            else:
+            try:
+                result_content = await call_mcp_tool(tool_name, arguments, auth_info)
                 response_data = {
-                    "jsonrpc": "2.0", 
+                    "jsonrpc": "2.0",
                     "id": rpc_id,
-                    "error": {"code": -32601, "message": "MCP server not initialized"}
+                    "result": {
+                        "content": result_content
+                    }
+                }
+            except Exception as tool_error:
+                logger.error(f"Tool call error: {tool_error}")
+                response_data = {
+                    "jsonrpc": "2.0",
+                    "id": rpc_id,
+                    "error": {
+                        "code": -32603,
+                        "message": f"Tool execution failed: {str(tool_error)}"
+                    }
                 }
                 
         else:
@@ -674,7 +650,7 @@ async def health_check():
         return {
             "status": "healthy", 
             "database": "connected",
-            "mcp_server": "initialized" if mcp_server else "not_initialized",
+            "mcp_server": "initialized",
             "sessions": len(mcp_sessions),
             "tokens": len(access_tokens),
             "timestamp": datetime.now().isoformat()
@@ -686,16 +662,6 @@ async def health_check():
             "timestamp": datetime.now().isoformat()
         }
 
-# Startup event
-@app.on_event("startup")
-async def startup_event():
-    """Initialize database and MCP server on startup"""
-    await setup_database()
-    await create_mcp_server()
-    logger.info(f"🚀 Remote MCP Server started on port {PORT}")
-    logger.info(f"🔗 OAuth Discovery: {BASE_URL}/.well-known/oauth-protected-resource")
-    logger.info(f"🔐 Authorization endpoint: {BASE_URL}/authorize")
-    logger.info(f"🎯 MCP endpoint: {BASE_URL}/mcp")
 
 # Main execution
 if __name__ == "__main__":
