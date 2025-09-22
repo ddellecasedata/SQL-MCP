@@ -120,6 +120,19 @@ app.add_middleware(
 # Add static files and templates for auth UI
 templates = Jinja2Templates(directory="templates") if os.path.exists("templates") else None
 
+# Root endpoint per evitare 404
+@app.get("/")
+async def root():
+    """Root endpoint con info sul server MCP"""
+    return {
+        "name": "Remote MCP Inventory Server",
+        "version": "3.0.0",
+        "mcp_endpoint": "/mcp",
+        "debug_endpoint": "/mcp-debug",
+        "oauth_discovery": "/.well-known/oauth-protected-resource",
+        "health_check": "/health"
+    }
+
 # Utility functions
 def get_base_url(request: Request) -> str:
     """Get base URL from request or environment"""
@@ -552,16 +565,34 @@ async def mcp_endpoint(request: Request):
                 return auth_result["response"]
             auth_info = auth_result["auth_info"]
         
-        # Handle session management
+        # Handle session management - more flexible
         session_id = request.headers.get("mcp-session-id")
-        if not session_id or body.get("method") == "initialize":
+        method = body.get("method")
+        
+        if method == "initialize":
+            # Always create new session for initialize
             session_id = str(uuid.uuid4())
             mcp_sessions[session_id] = {
                 "created_at": datetime.now(),
                 "auth_info": auth_info
             }
+            logger.info(f"Created new session: {session_id}")
+        elif not session_id:
+            # Create session for requests without session_id
+            session_id = str(uuid.uuid4())
+            mcp_sessions[session_id] = {
+                "created_at": datetime.now(),
+                "auth_info": auth_info
+            }
+            logger.info(f"Created session for non-initialize request: {session_id}")
+        elif session_id not in mcp_sessions:
+            # Recreation session if not found
+            mcp_sessions[session_id] = {
+                "created_at": datetime.now(),
+                "auth_info": auth_info
+            }
+            logger.info(f"Recreated missing session: {session_id}")
         
-        method = body.get("method")
         params = body.get("params", {})
         
         # Handle MCP methods
