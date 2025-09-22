@@ -2,8 +2,8 @@ services:
   - type: web
     name: sql-mcp-server
     env: python3
-    region: frankfurt  # EU region for Italian users
-    plan: free  # Free tier
+    region: frankfurt
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: python3 server_complete.py
     envVars:
@@ -12,55 +12,15 @@ services:
           name: sql-mcp-db
           property: connectionString
       - key: API_KEY
-        value: "GenuinMiglioreAgenteDelMondo"
+        value: GenuinMiglioreAgenteDelMondo
       - key: PORT
         value: "10000"
-      - key: DEBUG
-        value: "false"
     healthCheckPath: /health
     
-  - type: pserv  # PostgreSQL database
+  - type: pserv
     name: sql-mcp-db
     env: postgresql
-    region: frankfurt
-    plan: free  # Free PostgreSQL tier
+    region: frankfurt  
+    plan: free
     databaseName: inventario_db
     databaseUser: inventario_user
-    
-# Build settings
-build:
-  buildCommand: |
-    pip install --upgrade pip
-    pip install -r requirements.txt
-    
-# Environment settings  
-env:
-  PYTHON_VERSION: "3.11"
-  NODE_VERSION: "18"
-  
-# Health check configuration
-healthCheck:
-  path: /health
-  interval: 30s
-  timeout: 10s
-  retries: 3
-  startPeriod: 60s
-
-# Scaling configuration (for paid plans)
-scaling:
-  minInstances: 1
-  maxInstances: 3
-  targetCPU: 70
-  targetMemory: 80
-
-# Logging configuration
-logging:
-  level: info
-  format: json
-  
-# Security headers
-headers:
-  X-Frame-Options: DENY
-  X-Content-Type-Options: nosniff
-  X-XSS-Protection: "1; mode=block"
-  Strict-Transport-Security: "max-age=31536000; includeSubDomains"
