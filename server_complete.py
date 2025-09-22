@@ -136,6 +136,20 @@ app.add_middleware(
 # Inizializzazione MCP Server
 mcp_server = Server("inventario-mcp")
 
+# Dependency per autenticazione API Key
+async def verify_api_key(authorization: Optional[str] = Header(None)):
+    """Verifica l'API key nelle richieste"""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Authorization header mancante")
+    
+    # Supporta formato "Bearer API_KEY" o solo "API_KEY"  
+    token = authorization.replace("Bearer ", "") if authorization.startswith("Bearer ") else authorization
+    
+    if token != API_KEY:
+        raise HTTPException(status_code=401, detail="API key non valida")
+    
+    return token
+
 # Endpoint per servire il protocollo MCP
 @app.get("/mcp/tools")
 async def get_mcp_tools():
