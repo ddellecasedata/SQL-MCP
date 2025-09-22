@@ -150,77 +150,134 @@ async def verify_api_key(authorization: Optional[str] = Header(None)):
     
     return token
 
-# Endpoint per servire il protocollo MCP
-@app.get("/mcp/tools")
-async def get_mcp_tools():
-    """Endpoint per ottenere la lista dei tool MCP disponibili"""
-    return {
-        "tools": [
-            {
-                "name": "health_check",
-                "description": "Check dello stato del server e database",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
-            },
-            {
-                "name": "lista_alimenti",
-                "description": "Ottieni lista completa degli alimenti nell'inventario",
-                "inputSchema": {
-                    "type": "object", 
-                    "properties": {
-                        "categoria": {"type": "string", "description": "Filtra per categoria"},
-                        "ubicazione": {"type": "string", "description": "Filtra per ubicazione"}
-                    }
-                }
-            },
-            {
-                "name": "aggiungi_alimento",
-                "description": "Aggiungi un nuovo alimento all'inventario", 
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "nome": {"type": "string", "description": "Nome alimento"},
-                        "quantita": {"type": "number", "description": "Quantità"},
-                        "unita_misura": {"type": "string", "enum": ["PEZZI", "KG", "LITRI", "GRAMMI"]},
-                        "categoria": {"type": "string", "enum": ["LATTICINI", "VERDURE", "FRUTTA", "CARNE", "PESCE", "CONSERVE", "BEVANDE", "ALTRO"]},
-                        "ubicazione": {"type": "string", "enum": ["FRIGO", "FREEZER", "DISPENSA", "CANTINA"]},
-                        "data_scadenza": {"type": "string", "format": "date", "description": "Data scadenza YYYY-MM-DD"}
+# Endpoint MCP JSON-RPC 2.0 
+@app.post("/mcp")
+async def mcp_endpoint(request: dict, api_key: str = Depends(verify_api_key)):
+    """Endpoint principale MCP che implementa JSON-RPC 2.0"""
+    try:
+        # Verifica formato JSON-RPC 2.0
+        if request.get("jsonrpc") != "2.0":
+            raise HTTPException(status_code=400, detail="Richiede JSON-RPC 2.0")
+        
+        method = request.get("method")
+        request_id = request.get("id")
+        params = request.get("params", {})
+        
+        if method == "tools/list":
+            # Lista dei tool MCP disponibili
+            result = {
+                "tools": [
+                    {
+                        "name": "health_check",
+                        "title": "Health Check Server",
+                        "description": "Check dello stato del server e database",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {},
+                            "required": []
+                        }
                     },
-                    "required": ["nome", "quantita", "unita_misura", "categoria", "ubicazione"]
-                }
-            },
-            {
-                "name": "alimenti_in_scadenza",
-                "description": "Ottieni alimenti in scadenza entro N giorni",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "giorni": {"type": "integer", "default": 3, "description": "Giorni limite per scadenza"}
+                    {
+                        "name": "lista_alimenti", 
+                        "title": "Lista Alimenti Inventario",
+                        "description": "Ottieni lista completa degli alimenti nell'inventario",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "categoria": {"type": "string", "description": "Filtra per categoria"},
+                                "ubicazione": {"type": "string", "description": "Filtra per ubicazione"}
+                            }
+                        }
+                    },
+                    {
+                        "name": "aggiungi_alimento",
+                        "title": "Aggiungi Alimento",
+                        "description": "Aggiungi un nuovo alimento all'inventario",
+                        "inputSchema": {
+                            "type": "object", 
+                            "properties": {
+                                "nome": {"type": "string", "description": "Nome alimento"},
+                                "quantita": {"type": "number", "description": "Quantità"},
+                                "unita_misura": {"type": "string", "enum": ["PEZZI", "KG", "LITRI", "GRAMMI"]},
+                                "categoria": {"type": "string", "enum": ["LATTICINI", "VERDURE", "FRUTTA", "CARNE", "PESCE", "CONSERVE", "BEVANDE", "ALTRO"]},
+                                "ubicazione": {"type": "string", "enum": ["FRIGO", "FREEZER", "DISPENSA", "CANTINA"]},
+                                "data_scadenza": {"type": "string", "format": "date", "description": "Data scadenza YYYY-MM-DD"}
+                            },
+                            "required": ["nome", "quantita", "unita_misura", "categoria", "ubicazione"]
+                        }
+                    },
+                    {
+                        "name": "alimenti_in_scadenza",
+                        "title": "Alimenti in Scadenza",
+                        "description": "Ottieni alimenti in scadenza entro N giorni",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "giorni": {"type": "integer", "default": 3, "description": "Giorni limite per scadenza"}
+                            }
+                        }
                     }
+                ]
+            }
+            
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": result
+            }
+            
+        elif method == "tools/call":
+            # Chiamata di un tool specifico
+            tool_name = params.get("name")
+            arguments = params.get("arguments", {})
+            
+            if tool_name == "health_check":
+                content = await mcp_health_check()
+            elif tool_name == "lista_alimenti":
+                content = await mcp_lista_alimenti(**arguments)
+            elif tool_name == "aggiungi_alimento":
+                content = await mcp_aggiungi_alimento(**arguments) 
+            elif tool_name == "alimenti_in_scadenza":
+                content = await mcp_alimenti_in_scadenza(**arguments)
+            else:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "error": {
+                        "code": -32601,
+                        "message": f"Tool '{tool_name}' non trovato"
+                    }
+                }
+            
+            return {
+                "jsonrpc": "2.0", 
+                "id": request_id,
+                "result": {
+                    "content": content["content"],
+                    "isError": False
                 }
             }
-        ]
-    }
-
-@app.post("/mcp/call")
-async def call_mcp_tool(request: dict, api_key: str = Depends(verify_api_key)):
-    """Endpoint per chiamare un tool MCP"""
-    tool_name = request.get("name")
-    arguments = request.get("arguments", {})
-    
-    if tool_name == "health_check":
-        return await mcp_health_check()
-    elif tool_name == "lista_alimenti":
-        return await mcp_lista_alimenti(**arguments)
-    elif tool_name == "aggiungi_alimento":
-        return await mcp_aggiungi_alimento(**arguments)
-    elif tool_name == "alimenti_in_scadenza":
-        return await mcp_alimenti_in_scadenza(**arguments)
-    else:
-        raise HTTPException(status_code=404, detail=f"Tool '{tool_name}' non trovato")
+            
+        else:
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {
+                    "code": -32601,
+                    "message": f"Metodo '{method}' non supportato"
+                }
+            }
+            
+    except Exception as e:
+        logger.error(f"Errore MCP endpoint: {e}")
+        return {
+            "jsonrpc": "2.0",
+            "id": request.get("id"),
+            "error": {
+                "code": -32603,
+                "message": f"Errore interno: {str(e)}"
+            }
+        }
 
 # Implementazioni dei tool MCP
 async def mcp_health_check():
