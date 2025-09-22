@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "inventario-alimentare": {
+      "command": "python3",
+      "args": [
+        "/Users/daniele/SQL-MCP/inventario_mcp.py"
+      ],
+      "env": {
+        "DATABASE_URL": "postgresql://postgres:InventoryDB2024!@dpg-cstiqn3gbbvc73crrht0-a.frankfurt-postgres.render.com/inventario_postgresql_db"
+      }
+    }
+  }
+}

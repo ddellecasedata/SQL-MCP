@@ -1,4 +1,38 @@
-# Server MCP per Inventario e Task Management 📦📋
+# Server MCP per Claude Desktop 📦📋
+
+## 🚀 Server MCP per Claude Desktop
+
+### 🍎 Usa con Claude Desktop (Consigliato)
+
+Il server MCP è ottimizzato per Claude Desktop di Anthropic:
+
+1. **Installa dipendenze:**
+   ```bash
+   pip3 install -r requirements.txt
+   ```
+
+2. **Configura Claude Desktop:**
+   - Copia il contenuto di `claude_desktop_config.json` 
+   - Incollalo in `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
+   - Riavvia Claude Desktop
+
+3. **Tools disponibili:**
+   - 🔍 `cerca_alimenti` - Cerca per nome/categoria/ubicazione
+   - 📦 `dettagli_alimento` - Dettagli completi di un alimento
+   - 📊 `statistiche_inventario` - Statistiche generali inventario
+   - ⏰ `alimenti_in_scadenza` - Controllo scadenze
+
+4. **Esempi di utilizzo in Claude:**
+   ```
+   "Cerca tutti i pomodori nell'inventario"
+   "Mostrami cosa scade nei prossimi 7 giorni"
+   "Statistiche complete dell'inventario"
+   "Dettagli dell'alimento con ID 1"
+   ```
+
+📋 **[Guida completa setup →](SETUP_CLAUDE_DESKTOP.md)**
+
+## 🌐 Server MCP per OpenAI per Inventario e Task Management 📦📋
 
 Server MCP completo per la gestione automatizzata tramite LLM del magazzino alimentari e delle attività (TODO list) con database PostgreSQL.
 
