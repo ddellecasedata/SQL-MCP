@@ -51,25 +51,56 @@ class DatabaseConfig:
         try:
             db_pool = await asyncpg.create_pool(
                 DATABASE_URL,
-                min_size=2,
+                min_size=1,
                 max_size=10,
-                command_timeout=30,
-                server_settings={
-                    'application_name': 'inventario_mcp_server',
-                    'timezone': 'Europe/Rome'
-                }
+                command_timeout=60
             )
             logger.info("Pool di connessioni database creato con successo")
             
-            # Test connessione
+            # Test connessione e setup schema
             async with db_pool.acquire() as conn:
                 version = await conn.fetchval("SELECT version()")
                 logger.info(f"Connesso a PostgreSQL: {version}")
                 
+                # Verifica se le tabelle esistono, altrimenti crea lo schema
+                await DatabaseConfig.setup_schema(conn)
+                
         except Exception as e:
             logger.error(f"Errore nella creazione del pool database: {e}")
             raise
-    
+
+    @staticmethod
+    async def setup_schema(conn):
+        """Setup automatico dello schema database"""
+        try:
+            # Verifica se la tabella alimenti esiste
+            exists = await conn.fetchval(
+                "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'alimenti')"
+            )
+            
+            if not exists:
+                logger.info("Schema database non trovato, creazione in corso...")
+                
+                # Leggi e esegui lo schema SQL
+                import os
+                schema_path = os.path.join(os.path.dirname(__file__), 'database', 'schema.sql')
+                
+                if os.path.exists(schema_path):
+                    with open(schema_path, 'r', encoding='utf-8') as f:
+                        schema_sql = f.read()
+                    
+                    # Esegui lo schema in una transazione
+                    await conn.execute(schema_sql)
+                    logger.info("✅ Schema database creato con successo!")
+                else:
+                    logger.warning("File schema.sql non trovato, continuazione senza setup automatico")
+            else:
+                logger.info("✅ Schema database già esistente")
+                
+        except Exception as e:
+            logger.error(f"Errore nel setup schema: {e}")
+            # Non bloccare l'avvio se il setup fallisce
+
     @staticmethod
     async def close_pool():
         global db_pool
