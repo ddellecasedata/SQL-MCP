@@ -2,6 +2,10 @@
 # MCP Framework
 mcp[cli]>=1.2.0
 
+# Web Framework per server remoto
+fastapi>=0.100.0
+uvicorn[standard]>=0.20.0
+
 # Database
 asyncpg>=0.28.0
 

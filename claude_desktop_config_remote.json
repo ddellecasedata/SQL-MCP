@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "inventario-alimentare-remoto": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://sql-mcp-server.onrender.com/mcp",
+        "--transport",
+        "http-only"
+      ]
+    }
+  }
+}
