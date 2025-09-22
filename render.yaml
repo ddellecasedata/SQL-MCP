@@ -1,0 +1,67 @@
+services:
+  - type: web
+    name: inventario-mcp-server
+    env: python3
+    region: frankfurt  # EU region for Italian users
+    plan: starter  # Free tier, upgrade to standard/pro for production
+    buildCommand: pip install -r requirements.txt
+    startCommand: python3 server_complete.py
+    envVars:
+      - key: DATABASE_URL
+        sync: false  # Set manually in Render dashboard
+      - key: API_KEY
+        generateValue: true  # Generate secure random API key
+      - key: PORT
+        value: "10000"  # Default Render port
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+      - key: DEBUG
+        value: "false"
+    healthCheckPath: /health
+    
+  - type: pserv  # PostgreSQL database
+    name: inventario-db
+    env: postgresql
+    region: frankfurt
+    plan: free  # Free PostgreSQL tier
+    databaseName: inventario_db
+    databaseUser: inventario_user
+    ipAllowList: []  # Allow all IPs, restrict in production
+    
+# Build settings
+build:
+  buildCommand: |
+    pip install --upgrade pip
+    pip install -r requirements.txt
+    
+# Environment settings  
+env:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "18"
+  
+# Health check configuration
+healthCheck:
+  path: /health
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  startPeriod: 60s
+
+# Scaling configuration (for paid plans)
+scaling:
+  minInstances: 1
+  maxInstances: 3
+  targetCPU: 70
+  targetMemory: 80
+
+# Logging configuration
+logging:
+  level: info
+  format: json
+  
+# Security headers
+headers:
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  X-XSS-Protection: "1; mode=block"
+  Strict-Transport-Security: "max-age=31536000; includeSubDomains"
