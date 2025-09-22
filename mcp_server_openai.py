@@ -33,6 +33,19 @@ from mcp.types import (
     Implementation, ServerCapabilities, ToolsCapability
 )
 
+# Import tool implementations
+from tools_magazzino import (
+    aggiungere_alimento_impl, consultare_giacenze_impl, 
+    scaricare_alimento_impl, notifiche_scadenza_impl
+)
+from tools_task import (
+    inserire_task_impl, elencare_task_impl, completare_task_impl
+)
+from tools_complete import (
+    aggiornare_alimento_impl, statistiche_consumi_impl,
+    aggiornare_task_impl, cancellare_task_impl, statistiche_task_impl
+)
+
 # Load environment variables
 load_dotenv()
 
@@ -700,14 +713,55 @@ available_tools = [
 
 async def call_mcp_tool(name: str, arguments: dict, auth_info: dict) -> List[dict]:
     """Handle tool calls with authentication context"""
-    if name == "search":
-        result_content = await handle_search_tool(arguments.get("query", ""), auth_info)
+    try:
+        # GESTIONE MAGAZZINO
+        if name == "aggiungere_alimento":
+            result_content = await aggiungere_alimento_impl(arguments, auth_info, db_pool)
+        elif name == "consultare_giacenze":
+            result_content = await consultare_giacenze_impl(arguments, auth_info, db_pool)
+        elif name == "scaricare_alimento":
+            result_content = await scaricare_alimento_impl(arguments, auth_info, db_pool)
+        elif name == "notifiche_scadenza":
+            result_content = await notifiche_scadenza_impl(arguments, auth_info, db_pool)
+        elif name == "scartare_alimento":
+            result_content = await scaricare_alimento_impl({**arguments, "motivo": "SCADUTO"}, auth_info, db_pool)
+        elif name == "aggiornare_alimento":
+            result_content = await aggiornare_alimento_impl(arguments, auth_info, db_pool)
+        elif name == "statistiche_consumi":
+            result_content = await statistiche_consumi_impl(arguments, auth_info, db_pool)
+            
+        # GESTIONE TASK
+        elif name == "inserire_task":
+            result_content = await inserire_task_impl(arguments, auth_info, db_pool)
+        elif name == "elencare_task":
+            result_content = await elencare_task_impl(arguments, auth_info, db_pool)
+        elif name == "completare_task":
+            result_content = await completare_task_impl(arguments, auth_info, db_pool)
+        elif name == "aggiornare_task":
+            result_content = await aggiornare_task_impl(arguments, auth_info, db_pool)
+        elif name == "cancellare_task":
+            result_content = await cancellare_task_impl(arguments, auth_info, db_pool)
+        elif name == "statistiche_task":
+            result_content = await statistiche_task_impl(arguments, auth_info, db_pool)
+            
+        # LEGACY TOOLS (backward compatibility)
+        elif name == "search":
+            result_content = await handle_search_tool(arguments.get("query", ""), auth_info)
+        elif name == "fetch":
+            result_content = await handle_fetch_tool(arguments.get("id", ""), auth_info)
+        else:
+            raise ValueError(f"Unknown tool: {name}")
+        
         return [{"type": c.type, "text": c.text} for c in result_content]
-    elif name == "fetch":
-        result_content = await handle_fetch_tool(arguments.get("id", ""), auth_info)
-        return [{"type": c.type, "text": c.text} for c in result_content]
-    else:
-        raise ValueError(f"Unknown tool: {name}")
+        
+    except Exception as e:
+        logger.error(f"Tool execution error for {name}: {e}")
+        error_content = [TextContent(type="text", text=json.dumps({
+            "success": False,
+            "error": f"Tool execution failed: {str(e)}",
+            "tool": name
+        }))]
+        return [{"type": c.type, "text": c.text} for c in error_content]
 
 # Main MCP endpoint with authentication  
 @app.post("/mcp")
