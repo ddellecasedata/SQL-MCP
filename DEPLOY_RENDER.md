@@ -30,7 +30,7 @@
    - **Root Directory**: `/` (lascia vuoto)
    - **Environment**: `Python 3`
    - **Build Command**: `pip install -r requirements.txt`
-   - **Start Command**: `python3 server_complete.py`
+   - **Start Command**: `python3 mcp_server_openai.py`
    - **Plan**: Free
 
 ## ⚙️ Passo 3: Environment Variables
