@@ -1,32 +1,31 @@
 services:
   - type: web
-    name: inventario-mcp-server
+    name: sql-mcp-server
     env: python3
     region: frankfurt  # EU region for Italian users
-    plan: starter  # Free tier, upgrade to standard/pro for production
+    plan: free  # Free tier
     buildCommand: pip install -r requirements.txt
     startCommand: python3 server_complete.py
     envVars:
       - key: DATABASE_URL
-        sync: false  # Set manually in Render dashboard
+        fromDatabase:
+          name: sql-mcp-db
+          property: connectionString
       - key: API_KEY
-        generateValue: true  # Generate secure random API key
+        value: "GenuinMiglioreAgenteDelMondo"
       - key: PORT
-        value: "10000"  # Default Render port
-      - key: PYTHON_VERSION
-        value: "3.11.0"
+        value: "10000"
       - key: DEBUG
         value: "false"
     healthCheckPath: /health
     
   - type: pserv  # PostgreSQL database
-    name: inventario-db
+    name: sql-mcp-db
     env: postgresql
     region: frankfurt
     plan: free  # Free PostgreSQL tier
     databaseName: inventario_db
     databaseUser: inventario_user
-    ipAllowList: []  # Allow all IPs, restrict in production
     
 # Build settings
 build:

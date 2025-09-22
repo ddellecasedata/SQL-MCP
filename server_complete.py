@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 # Configurazione da variabili d'ambiente
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost/inventario_db")
 API_KEY = os.getenv("API_KEY", "your-secret-api-key-here")
-PORT = int(os.getenv("PORT", "8000"))
+PORT = int(os.getenv("PORT", "10000"))
 
 # Pool di connessioni PostgreSQL
 db_pool: Optional[asyncpg.Pool] = None
@@ -330,19 +330,17 @@ if __name__ == "__main__":
     
     logger.info("🚀 Avvio server MCP Inventario...")
     logger.info(f"📊 Porta: {PORT}")
-    logger.info(f"🗄️  Database: {DATABASE_URL.split('@')[1] if '@' in DATABASE_URL else 'localhost'}")
+    logger.info(f"🗄️  Database: {DATABASE_URL.split('/')[-1] if '/' in DATABASE_URL else 'localhost'}")
     logger.info(f"🔑 API Key configurata: {'✅' if API_KEY != 'your-secret-api-key-here' else '❌'}")
     
-    # Avvio server con configurazione per produzione
-    config = uvicorn.Config(
-        "server_complete:app",
+    # Configurazione per produzione (Render) vs sviluppo
+    is_production = os.getenv("RENDER") is not None
+    
+    uvicorn.run(
+        "server_complete:app" if is_production else app,
         host="0.0.0.0",
         port=PORT,
         reload=False,
-        workers=1,
         log_level="info",
         access_log=True
     )
-    
-    server = uvicorn.Server(config)
-    asyncio.run(server.serve())
