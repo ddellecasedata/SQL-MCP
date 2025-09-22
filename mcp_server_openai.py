@@ -559,7 +559,7 @@ available_tools = [
                 "quantita_consumata": {"type": "number", "description": "Quantità da scaricare"},
                 "motivo": {"type": "string", "enum": ["CONSUMATO", "SCADUTO", "BUTTATO"], "default": "CONSUMATO", "description": "Motivo del consumo"},
                 "note": {"type": "string", "description": "Note aggiuntive (opzionale)"},
-                "forza_scarico": {"type": "boolean", "default": false, "description": "Forza scarico anche se quantità > giacenza"}
+                "forza_scarico": {"type": "boolean", "default": False, "description": "Forza scarico anche se quantità > giacenza"}
             },
             "required": ["alimento_id", "quantita_consumata"]
         }
@@ -635,7 +635,7 @@ available_tools = [
                 "priorita": {"type": "string", "enum": ["ALTA", "MEDIA", "BASSA"], "default": "MEDIA", "description": "Priorità del task"},
                 "data_scadenza": {"type": "string", "format": "date", "description": "Scadenza del task (opzionale)"},
                 "assegnatario": {"type": "string", "description": "A chi è assegnato (opzionale)"},
-                "task_ricorrente": {"type": "boolean", "default": false, "description": "Se il task è ricorrente"},
+                "task_ricorrente": {"type": "boolean", "default": False, "description": "Se il task è ricorrente"},
                 "frequenza_ricorrenza": {"type": "string", "enum": ["GIORNALIERA", "SETTIMANALE", "MENSILE"], "description": "Frequenza ricorrenza (solo se ricorrente)"}
             },
             "required": ["titolo"]
