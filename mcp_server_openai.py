@@ -41,6 +41,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql:///inventario_db")
 PORT = int(os.getenv("PORT", "10000"))
 BASE_URL = os.getenv("BASE_URL", f"http://localhost:{PORT}")
 AUTH_SECRET = os.getenv("AUTH_SECRET", secrets.token_hex(32))
+DISABLE_AUTH = os.getenv("DISABLE_AUTH", "false").lower() == "true"  # Per debug/test
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -536,12 +537,20 @@ async def mcp_endpoint(request: Request):
         body = await request.json()
         rpc_id = body.get("id")
         
-        # Authenticate request
-        auth_result = await authenticate_token(request, rpc_id)
-        if not auth_result["success"]:
-            return auth_result["response"]
-        
-        auth_info = auth_result["auth_info"]
+        # Authenticate request (skip if auth disabled for debug)
+        if DISABLE_AUTH:
+            auth_info = {
+                "token": "debug-token",
+                "client_id": "debug-client", 
+                "scopes": ["inventory"],
+                "user_id": "debug-user"
+            }
+            logger.info("🚧 Authentication disabled for debug/testing")
+        else:
+            auth_result = await authenticate_token(request, rpc_id)
+            if not auth_result["success"]:
+                return auth_result["response"]
+            auth_info = auth_result["auth_info"]
         
         # Handle session management
         session_id = request.headers.get("mcp-session-id")
@@ -638,6 +647,25 @@ async def cleanup_mcp_session(
         logger.info(f"Cleaned up session: {mcp_session_id}")
     
     return Response(status_code=204)
+
+# Debug endpoint per test senza auth
+@app.post("/mcp-debug") 
+async def mcp_debug_endpoint(request: Request):
+    """Debug MCP endpoint senza autenticazione"""
+    logger.info("🚧 Debug endpoint called - no auth required")
+    
+    # Forza auth_info di debug
+    global DISABLE_AUTH
+    old_disable_auth = DISABLE_AUTH
+    DISABLE_AUTH = True
+    
+    try:
+        # Chiama l'endpoint normale
+        response = await mcp_endpoint(request)
+        return response
+    finally:
+        # Ripristina il flag originale
+        DISABLE_AUTH = old_disable_auth
 
 # Health check
 @app.get("/health")
