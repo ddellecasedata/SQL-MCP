@@ -136,6 +136,184 @@ app.add_middleware(
 # Inizializzazione MCP Server
 mcp_server = Server("inventario-mcp")
 
+# Endpoint per servire il protocollo MCP
+@app.get("/mcp/tools")
+async def get_mcp_tools():
+    """Endpoint per ottenere la lista dei tool MCP disponibili"""
+    return {
+        "tools": [
+            {
+                "name": "health_check",
+                "description": "Check dello stato del server e database",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            },
+            {
+                "name": "lista_alimenti",
+                "description": "Ottieni lista completa degli alimenti nell'inventario",
+                "inputSchema": {
+                    "type": "object", 
+                    "properties": {
+                        "categoria": {"type": "string", "description": "Filtra per categoria"},
+                        "ubicazione": {"type": "string", "description": "Filtra per ubicazione"}
+                    }
+                }
+            },
+            {
+                "name": "aggiungi_alimento",
+                "description": "Aggiungi un nuovo alimento all'inventario", 
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "nome": {"type": "string", "description": "Nome alimento"},
+                        "quantita": {"type": "number", "description": "Quantità"},
+                        "unita_misura": {"type": "string", "enum": ["PEZZI", "KG", "LITRI", "GRAMMI"]},
+                        "categoria": {"type": "string", "enum": ["LATTICINI", "VERDURE", "FRUTTA", "CARNE", "PESCE", "CONSERVE", "BEVANDE", "ALTRO"]},
+                        "ubicazione": {"type": "string", "enum": ["FRIGO", "FREEZER", "DISPENSA", "CANTINA"]},
+                        "data_scadenza": {"type": "string", "format": "date", "description": "Data scadenza YYYY-MM-DD"}
+                    },
+                    "required": ["nome", "quantita", "unita_misura", "categoria", "ubicazione"]
+                }
+            },
+            {
+                "name": "alimenti_in_scadenza",
+                "description": "Ottieni alimenti in scadenza entro N giorni",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "giorni": {"type": "integer", "default": 3, "description": "Giorni limite per scadenza"}
+                    }
+                }
+            }
+        ]
+    }
+
+@app.post("/mcp/call")
+async def call_mcp_tool(request: dict, api_key: str = Depends(verify_api_key)):
+    """Endpoint per chiamare un tool MCP"""
+    tool_name = request.get("name")
+    arguments = request.get("arguments", {})
+    
+    if tool_name == "health_check":
+        return await mcp_health_check()
+    elif tool_name == "lista_alimenti":
+        return await mcp_lista_alimenti(**arguments)
+    elif tool_name == "aggiungi_alimento":
+        return await mcp_aggiungi_alimento(**arguments)
+    elif tool_name == "alimenti_in_scadenza":
+        return await mcp_alimenti_in_scadenza(**arguments)
+    else:
+        raise HTTPException(status_code=404, detail=f"Tool '{tool_name}' non trovato")
+
+# Implementazioni dei tool MCP
+async def mcp_health_check():
+    """Tool MCP per health check"""
+    try:
+        async with db_pool.acquire() as conn:
+            version = await conn.fetchval("SELECT version()")
+            db_status = "🟢 Database connesso"
+    except Exception as e:
+        db_status = f"🔴 Database errore: {e}"
+    
+    return {
+        "content": [
+            {
+                "type": "text", 
+                "text": f"🏥 **Stato Server MCP Inventario**\n\n{db_status}\n🕒 Timestamp: {datetime.now().isoformat()}\n🔑 API Key configurata: ✅"
+            }
+        ]
+    }
+
+async def mcp_lista_alimenti(**kwargs):
+    """Tool MCP per lista alimenti"""
+    try:
+        async with db_pool.acquire() as conn:
+            query = "SELECT * FROM alimenti WHERE quantita > 0"
+            params = []
+            
+            if kwargs.get("categoria"):
+                query += " AND categoria = $" + str(len(params) + 1)
+                params.append(kwargs["categoria"])
+                
+            if kwargs.get("ubicazione"):
+                query += " AND ubicazione = $" + str(len(params) + 1)
+                params.append(kwargs["ubicazione"])
+            
+            query += " ORDER BY data_inserimento DESC"
+            
+            rows = await conn.fetch(query, *params)
+            alimenti = [dict(row) for row in rows]
+            
+            text = f"📋 **Lista Alimenti** ({len(alimenti)} trovati)\n\n"
+            for alimento in alimenti:
+                text += f"• **{alimento['nome']}**: {alimento['quantita']} {alimento['unita_misura']} - {alimento['categoria']} ({alimento['ubicazione']})\n"
+                if alimento['data_scadenza']:
+                    text += f"  📅 Scadenza: {alimento['data_scadenza']}\n"
+                text += "\n"
+            
+            return {"content": [{"type": "text", "text": text}]}
+            
+    except Exception as e:
+        return {"content": [{"type": "text", "text": f"❌ Errore: {e}"}]}
+
+async def mcp_aggiungi_alimento(**kwargs):
+    """Tool MCP per aggiungere alimento"""
+    try:
+        async with db_pool.acquire() as conn:
+            result = await conn.fetchrow("""
+                INSERT INTO alimenti (nome, quantita, unita_misura, categoria, ubicazione, data_scadenza, modificato_da)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                RETURNING id, data_inserimento
+            """, 
+            kwargs['nome'], 
+            kwargs['quantita'], 
+            kwargs['unita_misura'], 
+            kwargs['categoria'], 
+            kwargs['ubicazione'], 
+            kwargs.get('data_scadenza'),
+            'mcp_tool'
+            )
+            
+            return {
+                "content": [
+                    {
+                        "type": "text", 
+                        "text": f"✅ **Alimento Aggiunto**\n\n📦 {kwargs['nome']}\n🔢 Quantità: {kwargs['quantita']} {kwargs['unita_misura']}\n📂 Categoria: {kwargs['categoria']}\n📍 Ubicazione: {kwargs['ubicazione']}\n🆔 ID: {result['id']}"
+                    }
+                ]
+            }
+            
+    except Exception as e:
+        return {"content": [{"type": "text", "text": f"❌ Errore aggiunta alimento: {e}"}]}
+
+async def mcp_alimenti_in_scadenza(**kwargs):
+    """Tool MCP per alimenti in scadenza"""
+    try:
+        giorni = kwargs.get('giorni', 3)
+        async with db_pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT * FROM alimenti_in_scadenza($1)
+            """, giorni)
+            
+            text = f"⚠️ **Alimenti in Scadenza** (entro {giorni} giorni)\n\n"
+            
+            if not rows:
+                text += "🎉 Nessun alimento in scadenza!"
+            else:
+                for row in rows:
+                    giorni_rimanenti = row['giorni_alla_scadenza']
+                    stato = "🔴 SCADUTO" if giorni_rimanenti < 0 else f"⚠️ {giorni_rimanenti} giorni"
+                    text += f"• **{row['nome']}**: {row['quantita']} {row['unita_misura']} - {stato}\n"
+                    text += f"  📅 Scadenza: {row['data_scadenza']} ({row['categoria']} - {row['ubicazione']})\n\n"
+            
+            return {"content": [{"type": "text", "text": text}]}
+            
+    except Exception as e:
+        return {"content": [{"type": "text", "text": f"❌ Errore: {e}"}]}
+
 # Dependency per autenticazione API Key
 async def verify_api_key(authorization: Optional[str] = Header(None)):
     """Verifica l'API key nelle richieste"""
