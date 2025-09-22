@@ -499,34 +499,201 @@ async def handle_fetch_tool(item_id: str, auth_info: dict):
         logger.error(f"Fetch tool error: {e}")
         return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
 
-# Simple MCP Server Implementation (without SDK session complexity)
+# Complete MCP Server Implementation con tutti i tool richiesti
 available_tools = [
+    # === GESTIONE MAGAZZINO ===
     {
-        "name": "search",
-        "description": "Search for food items in the inventory database",
+        "name": "aggiungere_alimento",
+        "description": "Inserisce un nuovo alimento nel magazzino specificando tutti i campi richiesti",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "query": {
-                    "type": "string", 
-                    "description": "Search query for food items, categories, or locations"
-                }
+                "nome": {"type": "string", "description": "Nome del prodotto"},
+                "quantita": {"type": "number", "description": "Quantità disponibile"},
+                "unita_misura": {"type": "string", "enum": ["PEZZI", "KG", "LITRI", "GRAMMI"], "description": "Unità di misura"},
+                "data_scadenza": {"type": "string", "format": "date", "description": "Data di scadenza (YYYY-MM-DD)"},
+                "data_apertura": {"type": "string", "format": "date", "description": "Data di apertura (YYYY-MM-DD, opzionale)"},
+                "categoria": {"type": "string", "enum": ["LATTICINI", "VERDURE", "FRUTTA", "CARNE", "PESCE", "CONSERVE", "BEVANDE", "ALTRO"], "description": "Categoria prodotto"},
+                "ubicazione": {"type": "string", "enum": ["FRIGO", "FREEZER", "DISPENSA", "CANTINA"], "description": "Dove è conservato"},
+                "prezzo_acquisto": {"type": "number", "description": "Prezzo di acquisto (opzionale)"},
+                "fornitore": {"type": "string", "description": "Fornitore (opzionale)"},
+                "lotto_acquisto": {"type": "string", "description": "Lotto di acquisto (opzionale)"}
             },
-            "required": ["query"]
+            "required": ["nome", "quantita", "unita_misura", "categoria", "ubicazione"]
         }
     },
     {
-        "name": "fetch", 
-        "description": "Get detailed information about a specific food item",
+        "name": "consultare_giacenze",
+        "description": "Visualizza le giacenze con filtri per categoria, ubicazione, scadenza",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "id": {
-                    "type": "string",
-                    "description": "Item ID in format 'alimento-{id}'"
-                }
+                "categoria": {"type": "string", "enum": ["LATTICINI", "VERDURE", "FRUTTA", "CARNE", "PESCE", "CONSERVE", "BEVANDE", "ALTRO"], "description": "Filtra per categoria (opzionale)"},
+                "ubicazione": {"type": "string", "enum": ["FRIGO", "FREEZER", "DISPENSA", "CANTINA"], "description": "Filtra per ubicazione (opzionale)"},
+                "in_scadenza_giorni": {"type": "integer", "description": "Mostra solo prodotti in scadenza entro X giorni (opzionale)"},
+                "quantita_minima": {"type": "number", "description": "Mostra solo prodotti con quantità >= valore (opzionale)"},
+                "limit": {"type": "integer", "default": 50, "description": "Numero massimo risultati"}
+            }
+        }
+    },
+    {
+        "name": "scaricare_alimento",
+        "description": "Registra il consumo di un alimento con controllo quantità disponibile",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "alimento_id": {"type": "integer", "description": "ID dell'alimento da scaricare"},
+                "quantita_consumata": {"type": "number", "description": "Quantità da scaricare"},
+                "motivo": {"type": "string", "enum": ["CONSUMATO", "SCADUTO", "BUTTATO"], "default": "CONSUMATO", "description": "Motivo del consumo"},
+                "note": {"type": "string", "description": "Note aggiuntive (opzionale)"},
+                "forza_scarico": {"type": "boolean", "default": false, "description": "Forza scarico anche se quantità > giacenza"}
             },
-            "required": ["id"]
+            "required": ["alimento_id", "quantita_consumata"]
+        }
+    },
+    {
+        "name": "scartare_alimento",
+        "description": "Registra alimenti scaduti o da buttare con motivazione",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "alimento_id": {"type": "integer", "description": "ID dell'alimento da scartare"},
+                "quantita_scartata": {"type": "number", "description": "Quantità da scartare"},
+                "motivo": {"type": "string", "enum": ["SCADUTO", "BUTTATO"], "description": "Motivo dello scarto"},
+                "note": {"type": "string", "description": "Dettagli sullo scarto"}
+            },
+            "required": ["alimento_id", "quantita_scartata", "motivo"]
+        }
+    },
+    {
+        "name": "aggiornare_alimento",
+        "description": "Modifica dati di un alimento esistente",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "alimento_id": {"type": "integer", "description": "ID dell'alimento da modificare"},
+                "nome": {"type": "string", "description": "Nuovo nome (opzionale)"},
+                "quantita": {"type": "number", "description": "Nuova quantità (opzionale)"},
+                "data_scadenza": {"type": "string", "format": "date", "description": "Nuova data scadenza (opzionale)"},
+                "data_apertura": {"type": "string", "format": "date", "description": "Nuova data apertura (opzionale)"},
+                "categoria": {"type": "string", "enum": ["LATTICINI", "VERDURE", "FRUTTA", "CARNE", "PESCE", "CONSERVE", "BEVANDE", "ALTRO"], "description": "Nuova categoria (opzionale)"},
+                "ubicazione": {"type": "string", "enum": ["FRIGO", "FREEZER", "DISPENSA", "CANTINA"], "description": "Nuova ubicazione (opzionale)"},
+                "prezzo_acquisto": {"type": "number", "description": "Nuovo prezzo (opzionale)"},
+                "fornitore": {"type": "string", "description": "Nuovo fornitore (opzionale)"},
+                "lotto_acquisto": {"type": "string", "description": "Nuovo lotto (opzionale)"}
+            },
+            "required": ["alimento_id"]
+        }
+    },
+    {
+        "name": "notifiche_scadenza",
+        "description": "Restituisce alimenti in scadenza entro X giorni",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "giorni_limite": {"type": "integer", "default": 3, "description": "Giorni entro cui cercare scadenze"},
+                "categoria": {"type": "string", "enum": ["LATTICINI", "VERDURE", "FRUTTA", "CARNE", "PESCE", "CONSERVE", "BEVANDE", "ALTRO"], "description": "Filtra per categoria (opzionale)"},
+                "ubicazione": {"type": "string", "enum": ["FRIGO", "FREEZER", "DISPENSA", "CANTINA"], "description": "Filtra per ubicazione (opzionale)"}
+            }
+        }
+    },
+    {
+        "name": "statistiche_consumi",
+        "description": "Calcola consumi per periodo con raggruppamento per categoria o motivo",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "data_inizio": {"type": "string", "format": "date", "description": "Data inizio periodo (default: 30 giorni fa)"},
+                "data_fine": {"type": "string", "format": "date", "description": "Data fine periodo (default: oggi)"},
+                "raggruppa_per": {"type": "string", "enum": ["categoria", "motivo", "totale"], "default": "categoria", "description": "Come raggruppare i dati"}
+            }
+        }
+    },
+    
+    # === GESTIONE TASK ===
+    {
+        "name": "inserire_task",
+        "description": "Crea nuovo task con gestione ricorrenza",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "titolo": {"type": "string", "description": "Titolo del task"},
+                "descrizione": {"type": "string", "description": "Descrizione dettagliata (opzionale)"},
+                "priorita": {"type": "string", "enum": ["ALTA", "MEDIA", "BASSA"], "default": "MEDIA", "description": "Priorità del task"},
+                "data_scadenza": {"type": "string", "format": "date", "description": "Scadenza del task (opzionale)"},
+                "assegnatario": {"type": "string", "description": "A chi è assegnato (opzionale)"},
+                "task_ricorrente": {"type": "boolean", "default": false, "description": "Se il task è ricorrente"},
+                "frequenza_ricorrenza": {"type": "string", "enum": ["GIORNALIERA", "SETTIMANALE", "MENSILE"], "description": "Frequenza ricorrenza (solo se ricorrente)"}
+            },
+            "required": ["titolo"]
+        }
+    },
+    {
+        "name": "aggiornare_task",
+        "description": "Modifica task esistente con tracciamento modifiche",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "integer", "description": "ID del task da modificare"},
+                "titolo": {"type": "string", "description": "Nuovo titolo (opzionale)"},
+                "descrizione": {"type": "string", "description": "Nuova descrizione (opzionale)"},
+                "priorita": {"type": "string", "enum": ["ALTA", "MEDIA", "BASSA"], "description": "Nuova priorità (opzionale)"},
+                "stato": {"type": "string", "enum": ["DA_FARE", "IN_CORSO", "COMPLETATO", "ANNULLATO"], "description": "Nuovo stato (opzionale)"},
+                "data_scadenza": {"type": "string", "format": "date", "description": "Nuova scadenza (opzionale)"},
+                "assegnatario": {"type": "string", "description": "Nuovo assegnatario (opzionale)"}
+            },
+            "required": ["task_id"]
+        }
+    },
+    {
+        "name": "completare_task",
+        "description": "Marca task come completato e gestisce ricorrenza automatica",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "integer", "description": "ID del task da completare"},
+                "note_completamento": {"type": "string", "description": "Note sul completamento (opzionale)"}
+            },
+            "required": ["task_id"]
+        }
+    },
+    {
+        "name": "elencare_task",
+        "description": "Lista task con filtri per stato, priorità, assegnatario, scadenza",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "stato": {"type": "string", "enum": ["DA_FARE", "IN_CORSO", "COMPLETATO", "ANNULLATO"], "description": "Filtra per stato (opzionale)"},
+                "priorita": {"type": "string", "enum": ["ALTA", "MEDIA", "BASSA"], "description": "Filtra per priorità (opzionale)"},
+                "assegnatario": {"type": "string", "description": "Filtra per assegnatario (opzionale)"},
+                "scadenza_entro_giorni": {"type": "integer", "description": "Solo task in scadenza entro X giorni (opzionale)"},
+                "ricorrenti": {"type": "boolean", "description": "Solo task ricorrenti (opzionale)"},
+                "limit": {"type": "integer", "default": 50, "description": "Numero massimo risultati"}
+            }
+        }
+    },
+    {
+        "name": "cancellare_task",
+        "description": "Elimina task (soft delete cambiando stato ad ANNULLATO)",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "integer", "description": "ID del task da cancellare"},
+                "motivo_cancellazione": {"type": "string", "description": "Motivo della cancellazione"}
+            },
+            "required": ["task_id"]
+        }
+    },
+    {
+        "name": "statistiche_task",
+        "description": "Report su completamento task per periodo",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "data_inizio": {"type": "string", "format": "date", "description": "Data inizio periodo (default: 30 giorni fa)"},
+                "data_fine": {"type": "string", "format": "date", "description": "Data fine periodo (default: oggi)"},
+                "raggruppa_per": {"type": "string", "enum": ["stato", "priorita", "assegnatario"], "default": "stato", "description": "Come raggruppare i dati"}
+            }
         }
     }
 ]
