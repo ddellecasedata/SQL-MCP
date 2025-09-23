@@ -138,7 +138,7 @@ async def consultare_giacenze_impl(arguments: dict, auth_info: dict, db_pool) ->
     try:
         utente = auth_info.get('user_id', 'unknown')
         
-        # Costruzione query dinamica
+        # Costruzione query dinamica SICURA
         base_query = """
             SELECT id, nome, quantita, unita_misura, data_scadenza, categoria, ubicazione,
                    prezzo_acquisto, fornitore, data_inserimento, ultima_modifica,
@@ -154,6 +154,7 @@ async def consultare_giacenze_impl(arguments: dict, auth_info: dict, db_pool) ->
         params = []
         param_count = 0
         
+        # Aggiungi filtri con parametri sicuri
         if arguments.get('categoria'):
             param_count += 1
             conditions.append(f"categoria = ${param_count}")
@@ -171,13 +172,16 @@ async def consultare_giacenze_impl(arguments: dict, auth_info: dict, db_pool) ->
         
         if arguments.get('in_scadenza_giorni'):
             param_count += 1
-            conditions.append(f"data_scadenza IS NOT NULL AND data_scadenza <= CURRENT_DATE + INTERVAL '{arguments['in_scadenza_giorni']} days'")
+            conditions.append(f"data_scadenza IS NOT NULL AND data_scadenza <= CURRENT_DATE + ${param_count} * INTERVAL '1 day'")
+            params.append(arguments['in_scadenza_giorni'])
         
+        # Applica condizioni
         if conditions:
             base_query += " AND " + " AND ".join(conditions)
         
         base_query += " ORDER BY data_scadenza ASC NULLS LAST, nome ASC"
         
+        # Aggiungi LIMIT
         limit = arguments.get('limit', 50)
         param_count += 1
         base_query += f" LIMIT ${param_count}"
@@ -212,7 +216,32 @@ async def consultare_giacenze_impl(arguments: dict, auth_info: dict, db_pool) ->
                 
                 giacenze.append(giacenza)
             
-            # Statistiche riassuntive
+            # Statistiche riassuntive - ricostruisce query per evitare errori di parametri
+            stats_conditions = []
+            stats_params = []
+            stats_param_count = 0
+            
+            # Riapplica filtri per statistiche (senza LIMIT)
+            if arguments.get('categoria'):
+                stats_param_count += 1
+                stats_conditions.append(f"categoria = ${stats_param_count}")
+                stats_params.append(arguments['categoria'])
+            
+            if arguments.get('ubicazione'):
+                stats_param_count += 1
+                stats_conditions.append(f"ubicazione = ${stats_param_count}")
+                stats_params.append(arguments['ubicazione'])
+            
+            if arguments.get('quantita_minima'):
+                stats_param_count += 1
+                stats_conditions.append(f"quantita >= ${stats_param_count}")
+                stats_params.append(Decimal(str(arguments['quantita_minima'])))
+            
+            if arguments.get('in_scadenza_giorni'):
+                stats_param_count += 1
+                stats_conditions.append(f"data_scadenza IS NOT NULL AND data_scadenza <= CURRENT_DATE + ${stats_param_count} * INTERVAL '1 day'")
+                stats_params.append(arguments['in_scadenza_giorni'])
+            
             stats_query = """
                 SELECT 
                     COUNT(*) as totale_prodotti,
@@ -223,10 +252,10 @@ async def consultare_giacenze_impl(arguments: dict, auth_info: dict, db_pool) ->
                 FROM alimenti WHERE quantita > 0
             """
             
-            if conditions:
-                stats_query = stats_query.replace("WHERE quantita > 0", "WHERE quantita > 0 AND " + " AND ".join(conditions[:-1]))  # Remove limit condition
+            if stats_conditions:
+                stats_query += " AND " + " AND ".join(stats_conditions)
             
-            stats_row = await conn.fetchrow(stats_query, *params[:-1])  # Remove limit param
+            stats_row = await conn.fetchrow(stats_query, *stats_params)
             
             response = {
                 "success": True,
