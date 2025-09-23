@@ -155,8 +155,6 @@ temp/
 tmp/
 logs/
 *.bak
-*.swp
-*.swo
 
 # Database dumps
 *.dump

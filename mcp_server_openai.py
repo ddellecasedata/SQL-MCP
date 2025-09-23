@@ -71,12 +71,6 @@ auth_codes = {}   # code -> {user_info, expires_at, code_challenge, etc}
 access_tokens = {}  # token -> {user_info, expires_at, scopes, etc}
 registered_clients = {}  # client_id -> client_info
 
-# API Key store
-api_keys = {}  # api_key -> {name, created_at, last_used, permissions}
-
-# Default API key for easy setup
-DEFAULT_API_KEY = os.getenv("DEFAULT_API_KEY", "mcp-key-" + secrets.token_urlsafe(32))
-
 # Pydantic models for requests
 class TokenRequest(BaseModel):
     grant_type: str
@@ -100,27 +94,10 @@ class AuthInfo(BaseModel):
 async def lifespan(app: FastAPI):
     # Startup
     await setup_database()
-    
-    # Initialize default API key
-    if DEFAULT_API_KEY not in api_keys:
-        api_keys[DEFAULT_API_KEY] = {
-            "name": "default-system-key",
-            "created_at": datetime.now(),
-            "last_used": None,
-            "permissions": ["inventory", "tasks"]
-        }
-    
     logger.info(f"🚀 Remote MCP Server started on port {PORT}")
     logger.info(f"🔗 OAuth Discovery: {BASE_URL}/.well-known/oauth-protected-resource")
     logger.info(f"🔐 Authorization endpoint: {BASE_URL}/authorize") 
     logger.info(f"🎯 MCP endpoint: {BASE_URL}/mcp")
-    logger.info(f"🔑 API Key authentication enabled")
-    logger.info(f"📋 Generate API keys: {BASE_URL}/generate-api-key")
-    if os.getenv("DEFAULT_API_KEY"):
-        logger.info(f"🔒 Using custom DEFAULT_API_KEY from environment")
-    else:
-        logger.info(f"🔒 Default API key: {DEFAULT_API_KEY[:16]}...")
-    
     yield
     # Shutdown - cleanup if needed
     if db_pool:
@@ -168,50 +145,7 @@ async def root():
         "mcp_endpoint": "/mcp",
         "debug_endpoint": "/mcp-debug",
         "oauth_discovery": "/.well-known/oauth-protected-resource",
-        "api_key_endpoint": "/generate-api-key",
-        "health_check": "/health",
-        "authentication": {
-            "methods": ["api_key", "oauth2.1"],
-            "api_key_header": "Authorization: Bearer <api_key>",
-            "default_key_env": "DEFAULT_API_KEY"
-        }
-    }
-
-# API Key Management Endpoints
-@app.post("/generate-api-key")
-async def create_api_key(name: str = "generated-key"):
-    """Generate a new API key"""
-    new_key = generate_api_key(name)
-    return {
-        "success": True,
-        "api_key": new_key,
-        "name": name,
-        "created_at": api_keys[new_key]["created_at"].isoformat(),
-        "permissions": api_keys[new_key]["permissions"],
-        "usage_instructions": {
-            "header": f"Authorization: Bearer {new_key}",
-            "curl_example": f"curl -H 'Authorization: Bearer {new_key}' https://sql-mcp-server.onrender.com/mcp"
-        }
-    }
-
-@app.get("/api-keys")
-async def list_api_keys():
-    """List all API keys (without showing the actual keys)"""
-    keys_info = []
-    for key, info in api_keys.items():
-        keys_info.append({
-            "name": info["name"],
-            "created_at": info["created_at"].isoformat(),
-            "last_used": info["last_used"].isoformat() if info["last_used"] else None,
-            "permissions": info["permissions"],
-            "key_preview": key[:8] + "..." if len(key) > 8 else key
-        })
-    
-    return {
-        "success": True,
-        "total_keys": len(api_keys),
-        "keys": keys_info,
-        "default_key_configured": DEFAULT_API_KEY in api_keys
+        "health_check": "/health"
     }
 
 # Utility functions
@@ -232,85 +166,6 @@ def generate_code_challenge():
         hashlib.sha256(code_verifier.encode('utf-8')).digest()
     ).decode('utf-8').rstrip('=')
     return code_verifier, code_challenge
-
-# API Key Management Functions
-def generate_api_key(name: str = "default") -> str:
-    """Generate a new API key"""
-    api_key = f"mcp-{secrets.token_urlsafe(32)}"
-    api_keys[api_key] = {
-        "name": name,
-        "created_at": datetime.now(),
-        "last_used": None,
-        "permissions": ["inventory", "tasks"]
-    }
-    return api_key
-
-def validate_api_key(api_key: str) -> dict:
-    """Validate API key and return auth info"""
-    if api_key == DEFAULT_API_KEY:
-        # Auto-register default key if not exists
-        if DEFAULT_API_KEY not in api_keys:
-            api_keys[DEFAULT_API_KEY] = {
-                "name": "default-key",
-                "created_at": datetime.now(),
-                "last_used": None,
-                "permissions": ["inventory", "tasks"]
-            }
-    
-    if api_key in api_keys:
-        # Update last used
-        api_keys[api_key]["last_used"] = datetime.now()
-        return {
-            "valid": True,
-            "key_info": api_keys[api_key],
-            "auth_info": {
-                "token": api_key,
-                "user_id": f"api-user-{api_keys[api_key]['name']}",
-                "client_id": "api-client",
-                "scopes": api_keys[api_key]["permissions"]
-            }
-        }
-    
-    return {"valid": False}
-
-async def authenticate_api_key(request: Request) -> dict:
-    """Authenticate request using API key"""
-    auth_header = request.headers.get("authorization")
-    
-    if not auth_header:
-        return {
-            "success": False,
-            "response": JSONResponse(
-                status_code=401,
-                content={"error": "Missing Authorization header"}
-            )
-        }
-    
-    if not auth_header.startswith("Bearer "):
-        return {
-            "success": False,
-            "response": JSONResponse(
-                status_code=401,
-                content={"error": "Invalid Authorization header format. Use: Bearer <api_key>"}
-            )
-        }
-    
-    api_key = auth_header[7:]  # Remove "Bearer " prefix
-    validation = validate_api_key(api_key)
-    
-    if not validation["valid"]:
-        return {
-            "success": False,
-            "response": JSONResponse(
-                status_code=401,
-                content={"error": "Invalid API key"}
-            )
-        }
-    
-    return {
-        "success": True,
-        "auth_info": validation["auth_info"]
-    }
 
 # Database setup
 async def setup_database():
@@ -918,7 +773,7 @@ async def mcp_endpoint(request: Request):
         body = await request.json()
         rpc_id = body.get("id")
         
-        # Authenticate request with multiple methods
+        # Authenticate request (skip if auth disabled for debug)
         if DISABLE_AUTH:
             auth_info = {
                 "token": "debug-token",
@@ -928,19 +783,10 @@ async def mcp_endpoint(request: Request):
             }
             logger.info("🚧 Authentication disabled for debug/testing")
         else:
-            # Try API Key authentication first
-            api_auth_result = await authenticate_api_key(request)
-            if api_auth_result["success"]:
-                auth_info = api_auth_result["auth_info"]
-                logger.info(f"✅ API Key authentication successful for user: {auth_info['user_id']}")
-            else:
-                # Fallback to OAuth if API key fails
-                oauth_result = await authenticate_token(request, rpc_id)
-                if not oauth_result["success"]:
-                    # Return API key error (more common) or OAuth error
-                    return api_auth_result["response"]
-                auth_info = oauth_result["auth_info"]
-                logger.info(f"✅ OAuth authentication successful for user: {auth_info['user_id']}")
+            auth_result = await authenticate_token(request, rpc_id)
+            if not auth_result["success"]:
+                return auth_result["response"]
+            auth_info = auth_result["auth_info"]
         
         # Handle session management - more flexible
         session_id = request.headers.get("mcp-session-id")
